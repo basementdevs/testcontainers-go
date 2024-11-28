@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	port           = nat.Port("9042/tcp")
-	shardAwarePort = nat.Port("19042/tcp")
+	port           = "9042/tcp"
+	shardAwarePort = "19042/tcp"
 )
 
-type ScyllaDBContainer struct {
+type Container struct {
 	testcontainers.Container
 }
 
@@ -41,7 +41,7 @@ func WithConfigFile(configFile string) testcontainers.CustomizeRequestOption {
 // WithShardAwareness enable shard-awareness in the ScyllaDB container so you can use the `19042` port.
 func WithShardAwareness() testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		req.ExposedPorts = append(req.ExposedPorts, shardAwarePort.Port())
+		req.ExposedPorts = append(req.ExposedPorts, shardAwarePort)
 		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(shardAwarePort))
 		return nil
 	}
@@ -50,12 +50,14 @@ func WithShardAwareness() testcontainers.CustomizeRequestOption {
 // WithAlternator enables the Alternator (DynamoDB Compatible API) service in the ScyllaDB container.
 // It will set the "alternator-port" parameter to the specified port.
 // It will also set the "alternator-write-isolation" parameter to "always" as a command line argument to the container.
-func WithAlternator(alternatorPort uint) testcontainers.CustomizeRequestOption {
+func WithAlternator(alternatorPort int) testcontainers.CustomizeRequestOption {
+	strPort := strconv.Itoa(alternatorPort)
+
 	return func(req *testcontainers.GenericContainerRequest) error {
-		setCommandFlag(req, "--alternator-port", strconv.Itoa(int(alternatorPort)))
+		setCommandFlag(req, "--alternator-port", strPort)
 		setCommandFlag(req, "--alternator-write-isolation", "always")
-		req.ExposedPorts = append(req.ExposedPorts, strconv.Itoa(int(alternatorPort)))
-		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(nat.Port(strconv.Itoa(int(alternatorPort)))))
+		req.ExposedPorts = append(req.ExposedPorts, strPort)
+		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(nat.Port(strPort)))
 		return nil
 	}
 }
@@ -73,13 +75,13 @@ func WithCustomCommand(command, value string) testcontainers.CustomizeRequestOpt
 // ConnectionHost returns the host and port of the Scylladb container with the default port
 // and obtaining the host and exposed port from the container
 // Eg: "host:port" -> "localhost:9042" -> "localhost:19042" -> "localhost:8000"
-func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint) (string, error) {
+func (c Container) ConnectionHost(ctx context.Context, port int) (string, error) {
 	host, err := c.Host(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.Itoa(int(port))))
+	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.Itoa(port)))
 	if err != nil {
 		return "", err
 	}
@@ -88,10 +90,10 @@ func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint) (strin
 }
 
 // Run starts a ScyllaDB container with the specified image and options
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*ScyllaDBContainer, error) {
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	req := testcontainers.ContainerRequest{
 		Image:        img,
-		ExposedPorts: []string{port.Port()},
+		ExposedPorts: []string{port},
 		Cmd: []string{
 			"--developer-mode=1",
 			"--overprovisioned=1",
@@ -113,14 +115,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 
 	for _, opt := range opts {
 		if err := opt.Customize(&genericContainerReq); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("customize: %w", err)
 		}
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, genericContainerReq)
-	var c *ScyllaDBContainer
+	var c *Container
 	if container != nil {
-		c = &ScyllaDBContainer{Container: container}
+		c = &Container{Container: container}
 	}
 
 	if err != nil {
@@ -138,5 +140,5 @@ func setCommandFlag(req *testcontainers.GenericContainerRequest, flag, value str
 		}
 	}
 	req.Cmd = cmdsWithoutDeveloperMode
-	req.Cmd = append(req.Cmd, fmt.Sprintf("%v=%v", flag, value))
+	req.Cmd = append(req.Cmd, flag+"="+value)
 }
