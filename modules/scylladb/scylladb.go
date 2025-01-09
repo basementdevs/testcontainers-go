@@ -14,12 +14,11 @@ import (
 )
 
 const (
-	port           = nat.Port("9042/tcp")
-	shardAwarePort = nat.Port("19042/tcp")
+	port           = "9042/tcp"
+	shardAwarePort = "19042/tcp"
 )
 
-// ScyllaDBContainer represents the ScyllaDB container type used in the module.
-type ScyllaDBContainer struct {
+type Container struct {
 	testcontainers.Container
 }
 
@@ -42,7 +41,7 @@ func WithConfigFile(configFile string) testcontainers.CustomizeRequestOption {
 // WithShardAwareness enable shard-awareness in the ScyllaDB container so you can use the `19042` port.
 func WithShardAwareness() testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		req.ExposedPorts = append(req.ExposedPorts, shardAwarePort.Port())
+		req.ExposedPorts = append(req.ExposedPorts, shardAwarePort)
 		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(shardAwarePort))
 		return nil
 	}
@@ -78,13 +77,13 @@ func WithCustomCommands(cmds map[string]string) testcontainers.CustomizeRequestO
 // ConnectionHost returns the host and port of the Scylladb container with the default port
 // and obtaining the host and exposed port from the container
 // Eg: "host:port" -> "localhost:9042" -> "localhost:19042" -> "localhost:8000"
-func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint16) (string, error) {
+func (c Container) ConnectionHost(ctx context.Context, port int) (string, error) {
 	host, err := c.Host(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.FormatInt(int64(port), 10)))
+	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.Itoa(port)))
 	if err != nil {
 		return "", err
 	}
@@ -93,10 +92,10 @@ func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint16) (str
 }
 
 // Run starts a ScyllaDB container with the specified image and options
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*ScyllaDBContainer, error) {
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	req := testcontainers.ContainerRequest{
 		Image:        img,
-		ExposedPorts: []string{port.Port()},
+		ExposedPorts: []string{port},
 		Cmd: []string{
 			"--developer-mode=1",
 			"--overprovisioned=1",
@@ -120,14 +119,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 
 	for _, opt := range opts {
 		if err := opt.Customize(&genericContainerReq); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("customize: %w", err)
 		}
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, genericContainerReq)
-	var c *ScyllaDBContainer
+	var c *Container
 	if container != nil {
-		c = &ScyllaDBContainer{Container: container}
+		c = &Container{Container: container}
 	}
 
 	if err != nil {
