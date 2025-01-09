@@ -18,6 +18,7 @@ const (
 	shardAwarePort = nat.Port("19042/tcp")
 )
 
+// ScyllaDBContainer represents the ScyllaDB container type used in the module.
 type ScyllaDBContainer struct {
 	testcontainers.Container
 }
@@ -30,7 +31,7 @@ func WithConfigFile(configFile string) testcontainers.CustomizeRequestOption {
 		cf := testcontainers.ContainerFile{
 			HostFilePath:      configFile,
 			ContainerFilePath: "/etc/scylla/scylla.yaml",
-			FileMode:          0o755,
+			FileMode:          0o644,
 		}
 		req.Files = append(req.Files, cf)
 
@@ -50,22 +51,26 @@ func WithShardAwareness() testcontainers.CustomizeRequestOption {
 // WithAlternator enables the Alternator (DynamoDB Compatible API) service in the ScyllaDB container.
 // It will set the "alternator-port" parameter to the specified port.
 // It will also set the "alternator-write-isolation" parameter to "always" as a command line argument to the container.
-func WithAlternator(alternatorPort uint) testcontainers.CustomizeRequestOption {
+func WithAlternator(alternatorPort uint16) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		setCommandFlag(req, "--alternator-port", strconv.Itoa(int(alternatorPort)))
-		setCommandFlag(req, "--alternator-write-isolation", "always")
-		req.ExposedPorts = append(req.ExposedPorts, strconv.Itoa(int(alternatorPort)))
-		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(nat.Port(strconv.Itoa(int(alternatorPort)))))
+		alternatorPortStr := strconv.FormatInt(int64(alternatorPort), 10)
+		req.ExposedPorts = append(req.ExposedPorts, alternatorPortStr)
+		req.WaitingFor = wait.ForAll(req.WaitingFor, wait.ForListeningPort(nat.Port(alternatorPortStr)))
+		setCommandFlag(req, map[string]string{
+			"--alternator-port":            alternatorPortStr,
+			"--alternator-write-isolation": "always",
+		})
+
 		return nil
 	}
 }
 
-// WithCustomCommand sets a custom command with a value for the ScyllaDB container.
-// This is an option to replace the default command with a custom one.
+// WithCustomCommands sets custom commands with  values for the ScyllaDB container.
+// This is an option to overwrite the default commands with a custom one.
 // See more [here](https://opensource.docs.scylladb.com/stable/operating-scylla/procedures/tips/best-practices-scylla-on-docker.html)
-func WithCustomCommand(command, value string) testcontainers.CustomizeRequestOption {
+func WithCustomCommands(cmds map[string]string) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		setCommandFlag(req, command, value)
+		setCommandFlag(req, cmds)
 		return nil
 	}
 }
@@ -73,13 +78,13 @@ func WithCustomCommand(command, value string) testcontainers.CustomizeRequestOpt
 // ConnectionHost returns the host and port of the Scylladb container with the default port
 // and obtaining the host and exposed port from the container
 // Eg: "host:port" -> "localhost:9042" -> "localhost:19042" -> "localhost:8000"
-func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint) (string, error) {
+func (c ScyllaDBContainer) ConnectionHost(ctx context.Context, port uint16) (string, error) {
 	host, err := c.Host(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.Itoa(int(port))))
+	containerPort, err := c.MappedPort(ctx, nat.Port(strconv.FormatInt(int64(port), 10)))
 	if err != nil {
 		return "", err
 	}
@@ -95,6 +100,8 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		Cmd: []string{
 			"--developer-mode=1",
 			"--overprovisioned=1",
+			"--smp=1",
+			"--memory=512M",
 		},
 		WaitingFor: wait.ForAll(
 			wait.ForLog(".*initialization completed.").AsRegexp(),
@@ -130,13 +137,24 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	return c, nil
 }
 
-func setCommandFlag(req *testcontainers.GenericContainerRequest, flag, value string) {
-	cmdsWithoutDeveloperMode := make([]string, 0, len(req.Cmd))
+func setCommandFlag(req *testcontainers.GenericContainerRequest, flag map[string]string) {
+	cmds := make([]string, 0, len(req.Cmd)+len(flag))
+
 	for _, cmd := range req.Cmd {
-		if !strings.Contains(cmd, flag) {
-			cmdsWithoutDeveloperMode = append(cmdsWithoutDeveloperMode, cmd)
+		seps := strings.SplitN(cmd, "=", 1)
+		val, ok := flag[seps[0]]
+
+		if !ok {
+			cmds = append(cmds, cmd)
+		} else {
+			cmds = append(cmds, fmt.Sprintf("%s=%s", seps[0], val))
+			delete(flag, seps[0])
 		}
 	}
-	req.Cmd = cmdsWithoutDeveloperMode
-	req.Cmd = append(req.Cmd, fmt.Sprintf("%v=%v", flag, value))
+
+	for key, val := range flag {
+		cmds = append(cmds, fmt.Sprintf("%s=%s", key, val))
+	}
+
+	req.Cmd = cmds
 }
