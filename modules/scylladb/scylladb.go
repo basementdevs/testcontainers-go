@@ -18,6 +18,7 @@ const (
 	shardAwarePort = "19042/tcp"
 )
 
+// Container represents a ScyllaDB container type used in the module
 type Container struct {
 	testcontainers.Container
 }
